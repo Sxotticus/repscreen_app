@@ -1,0 +1,313 @@
+import 'package:flutter/material.dart';
+import 'dart:async';
+import '../models/exercise.dart';
+import '../services/storage_service.dart';
+import '../services/sound_haptic_service.dart';
+import '../widgets/gradient_button.dart';
+
+class EarnTimeScreen extends StatefulWidget {
+  const EarnTimeScreen({super.key});
+
+  @override
+  State<EarnTimeScreen> createState() => _EarnTimeScreenState();
+}
+
+class _EarnTimeScreenState extends State<EarnTimeScreen>
+    with SingleTickerProviderStateMixin {
+  int _repCount = 0;
+  bool _sessionActive = false;
+  bool _sessionComplete = false;
+  late AnimationController _pulseController;
+  Exercise _exercise = Exercise.defaults[0]; // Default to push-ups
+  Timer? _simulationTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is Exercise) {
+      _exercise = args;
+    }
+  }
+
+  void _startSession() {
+    setState(() {
+      _sessionActive = true;
+      _repCount = 0;
+      _sessionComplete = false;
+    });
+    _pulseController.repeat(reverse: true);
+  }
+
+  void _countRep() {
+    if (!_sessionActive || _sessionComplete) return;
+    setState(() {
+      _repCount++;
+    });
+    SoundHapticService.playRepTick();
+    if (_repCount >= _exercise.repsPerSet) {
+      _completeSession();
+    }
+  }
+
+  void _completeSession() async {
+    _pulseController.stop();
+    _pulseController.reset();
+
+    final newTime = StorageService.screenTimeMinutes + _exercise.minutesEarned;
+    final newReps = StorageService.totalPushups + _exercise.repsPerSet;
+    final newSessions = StorageService.totalSessions + 1;
+
+    await StorageService.setScreenTimeMinutes(newTime);
+    await StorageService.setTotalPushups(newReps);
+    await StorageService.setTotalSessions(newSessions);
+    await StorageService.addExerciseCount(_exercise.name, _exercise.repsPerSet);
+    await StorageService.logSession(
+      exercise: _exercise.name,
+      reps: _exercise.repsPerSet,
+      minutesEarned: _exercise.minutesEarned,
+    );
+    await StorageService.updateStreak();
+    await StorageService.updateProfileStats(reps: _exercise.repsPerSet);
+
+    // Update daily challenge progress
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    if (StorageService.dailyChallengeDate != today) {
+      await StorageService.setDailyChallengeDate(today);
+      await StorageService.setDailyChallengeProgress(0);
+    }
+    final newProgress = StorageService.dailyChallengeProgress + 1;
+    await StorageService.setDailyChallengeProgress(newProgress);
+    if (newProgress >= 3) {
+      // Daily challenge: complete 3 sessions
+      final completed = StorageService.challengesCompleted;
+      if (StorageService.dailyChallengeProgress == 3) {
+        await StorageService.setChallengesCompleted(completed + 1);
+      }
+    }
+
+    setState(() {
+      _sessionComplete = true;
+      _sessionActive = false;
+    });
+
+    // Play set complete sound
+    SoundHapticService.playSetComplete();
+  }
+
+  void _simulateReps() {
+    if (_simulationTimer != null) return;
+    _startSession();
+    _simulationTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+      _countRep();
+      if (_repCount >= _exercise.repsPerSet) {
+        timer.cancel();
+        _simulationTimer = null;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    _simulationTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = _repCount / _exercise.repsPerSet;
+    final isPlank = _exercise.name == 'Planks';
+    final repLabel = isPlank ? 'min hold' : 'reps';
+
+    return Scaffold(
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: MediaQuery.of(context).size.height - MediaQuery.of(context).padding.top - MediaQuery.of(context).padding.bottom,
+            ),
+            child: IntrinsicHeight(
+              child: Column(
+                children: [
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_ios, color: Colors.white70),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  Expanded(
+                    child: Text(
+                      _exercise.name,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white),
+                    ),
+                  ),
+                  const SizedBox(width: 48),
+                ],
+              ),
+              const SizedBox(height: 40),
+
+              // Circular Progress
+              AnimatedBuilder(
+                animation: _pulseController,
+                builder: (context, child) {
+                  final scale = _sessionActive ? 1.0 + (_pulseController.value * 0.05) : 1.0;
+                  return Transform.scale(scale: scale, child: child);
+                },
+                child: SizedBox(
+                  width: 220,
+                  height: 220,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      SizedBox(
+                        width: 220, height: 220,
+                        child: CircularProgressIndicator(
+                          value: 1, strokeWidth: 12,
+                          color: Colors.white.withValues(alpha: 0.08),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 220, height: 220,
+                        child: CircularProgressIndicator(
+                          value: progress, strokeWidth: 12, strokeCap: StrokeCap.round,
+                          color: _sessionComplete ? const Color(0xFF4CAF50) : const Color(0xFF6C63FF),
+                        ),
+                      ),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(_sessionComplete ? '✅' : _exercise.emoji, style: const TextStyle(fontSize: 36)),
+                          const SizedBox(height: 8),
+                          Text(
+                            '$_repCount / ${_exercise.repsPerSet}',
+                            style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                          Text(repLabel, style: const TextStyle(fontSize: 16, color: Colors.white54)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 40),
+
+              // Status
+              if (_sessionComplete) ...[
+                const Text('🎉 Session Complete!', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF4CAF50))),
+                const SizedBox(height: 8),
+                Text('+${_exercise.minutesEarned} minutes earned!', style: const TextStyle(fontSize: 18, color: Colors.white70)),
+                const SizedBox(height: 8),
+                Text('Total: ${StorageService.screenTimeMinutes} minutes available',
+                    style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.5))),
+                const SizedBox(height: 8),
+                Text('🔥 Streak: ${StorageService.currentStreak} days',
+                    style: const TextStyle(fontSize: 15, color: Color(0xFFFF6B35))),
+              ] else if (!_sessionActive) ...[
+                Text('Ready for ${_exercise.name}?',
+                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
+                const SizedBox(height: 8),
+                Text('Complete ${_exercise.repsPerSet} $repLabel to earn ${_exercise.minutesEarned} minutes',
+                    style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.5))),
+              ] else ...[
+                const Text('Keep going! 🔥', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
+                const SizedBox(height: 8),
+                Text('${_exercise.repsPerSet - _repCount} $repLabel remaining',
+                    style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.5))),
+              ],
+
+              const Spacer(),
+
+              // Camera note
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6C63FF).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF6C63FF).withValues(alpha: 0.2)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.camera_alt, color: Color(0xFF6C63FF), size: 28),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Camera detection coming soon! For now, tap the button or use auto-demo.',
+                        style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.6)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Buttons
+              if (_sessionComplete) ...[
+                GradientButton(text: 'Do Another Set', icon: Icons.refresh, onPressed: _startSession),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity, height: 50,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Back to Home', style: TextStyle(fontSize: 16, color: Colors.white54)),
+                  ),
+                ),
+              ] else if (!_sessionActive) ...[
+                GradientButton(text: 'Start Set', icon: Icons.play_arrow, onPressed: _startSession),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity, height: 50,
+                  child: OutlinedButton(
+                    onPressed: _simulateReps,
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: const Text('▶ Auto Demo', style: TextStyle(color: Colors.white54)),
+                  ),
+                ),
+              ] else ...[
+                // Tap to count
+                GestureDetector(
+                  onTap: _countRep,
+                  child: Container(
+                    width: double.infinity,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(colors: [Color(0xFF6C63FF), Color(0xFF9D4EDD)]),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(color: const Color(0xFF6C63FF).withValues(alpha: 0.4), blurRadius: 16, offset: const Offset(0, 6)),
+                      ],
+                    ),
+                    child: Center(
+                      child: Text(
+                        'TAP FOR REP ${_exercise.emoji}',
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 32),
+            ],
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+  }
+}
