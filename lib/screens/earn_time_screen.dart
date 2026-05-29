@@ -18,8 +18,14 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
   bool _sessionActive = false;
   bool _sessionComplete = false;
   late AnimationController _pulseController;
-  Exercise _exercise = Exercise.defaults[0]; // Default to push-ups
+  Exercise _exercise = Exercise.defaults[0];
   Timer? _simulationTimer;
+
+  // ── Plank hold timer state ──
+  static const int _plankTargetSeconds = 60;
+  int _plankSecondsHeld = 0;
+  bool _plankHolding = false;
+  Timer? _plankTimer;
 
   @override
   void initState() {
@@ -120,14 +126,49 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
   void dispose() {
     _pulseController.dispose();
     _simulationTimer?.cancel();
+    _plankTimer?.cancel();
     super.dispose();
+  }
+
+  // ── Plank: press-and-hold to accumulate hold time ──
+  void _onPlankHoldStart() {
+    if (_sessionComplete || !_sessionActive) return;
+    if (_plankHolding) return;
+    setState(() => _plankHolding = true);
+    _plankTimer = Timer.periodic(const Duration(seconds: 1), (t) async {
+      if (!mounted) { t.cancel(); return; }
+      setState(() => _plankSecondsHeld++);
+      if (_plankSecondsHeld % 10 == 0) SoundHapticService.playCountdownTick();
+      if (_plankSecondsHeld >= _plankTargetSeconds) {
+        t.cancel();
+        setState(() => _plankHolding = false);
+        await _completeSession();
+      }
+    });
+  }
+
+  void _onPlankHoldEnd() {
+    if (!_plankHolding) return;
+    _plankTimer?.cancel();
+    _plankTimer = null;
+    setState(() => _plankHolding = false);
   }
 
   @override
   Widget build(BuildContext context) {
     final progress = _repCount / _exercise.repsPerSet;
     final isPlank = _exercise.name == 'Planks';
-    final repLabel = isPlank ? 'min hold' : 'reps';
+
+    // Plank-specific display
+    final plankProgress = _plankSecondsHeld / _plankTargetSeconds;
+    final plankMins = _plankSecondsHeld ~/ 60;
+    final plankSecs = _plankSecondsHeld % 60;
+    final plankDisplay = '$plankMins:${plankSecs.toString().padLeft(2, '0')}';
+    final plankRemaining = _plankTargetSeconds - _plankSecondsHeld;
+
+    final displayProgress = isPlank ? plankProgress : progress;
+    final centerLabel = isPlank ? plankDisplay : '$_repCount / ${_exercise.repsPerSet}';
+    final subLabel = isPlank ? 'hold' : 'reps';
 
     return Scaffold(
       body: SafeArea(
@@ -179,11 +220,14 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
                           color: Colors.white.withValues(alpha: 0.08),
                         ),
                       ),
-                      SizedBox(
-                        width: 220, height: 220,
+                      SizedBox(\n                        width: 220, height: 220,
                         child: CircularProgressIndicator(
-                          value: progress, strokeWidth: 12, strokeCap: StrokeCap.round,
-                          color: _sessionComplete ? const Color(0xFF4CAF50) : const Color(0xFF6C63FF),
+                          value: displayProgress, strokeWidth: 12, strokeCap: StrokeCap.round,
+                          color: _sessionComplete
+                              ? const Color(0xFF4CAF50)
+                              : (isPlank && _plankHolding)
+                                  ? const Color(0xFF00E676)
+                                  : const Color(0xFF6C63FF),
                         ),
                       ),
                       Column(
@@ -192,10 +236,10 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
                           Text(_sessionComplete ? '✅' : _exercise.emoji, style: const TextStyle(fontSize: 36)),
                           const SizedBox(height: 8),
                           Text(
-                            '$_repCount / ${_exercise.repsPerSet}',
+                            centerLabel,
                             style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.white),
                           ),
-                          Text(repLabel, style: const TextStyle(fontSize: 16, color: Colors.white54)),
+                          Text(subLabel, style: const TextStyle(fontSize: 16, color: Colors.white54)),
                         ],
                       ),
                     ],
@@ -219,12 +263,22 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
                 Text('Ready for ${_exercise.name}?',
                     style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
                 const SizedBox(height: 8),
-                Text('Complete ${_exercise.repsPerSet} $repLabel to earn ${_exercise.minutesEarned} minutes',
+                Text(
+                  isPlank
+                    ? 'Hold for 60 seconds to earn ${_exercise.minutesEarned} minutes'
+                    : 'Complete ${_exercise.repsPerSet} reps to earn ${_exercise.minutesEarned} minutes',
+                  style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.5))),
+              ] else if (isPlank) ...[
+                Text(
+                  _plankHolding ? 'Hold steady! 🧘' : 'Release detected — keep holding!',
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
+                const SizedBox(height: 8),
+                Text('${plankRemaining}s remaining',
                     style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.5))),
               ] else ...[
                 const Text('Keep going! 🔥', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
                 const SizedBox(height: 8),
-                Text('${_exercise.repsPerSet - _repCount} $repLabel remaining',
+                Text('${_exercise.repsPerSet - _repCount} reps remaining',
                     style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.5))),
               ],
 
@@ -279,27 +333,62 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
                   ),
                 ),
               ] else ...[
-                // Tap to count
-                GestureDetector(
-                  onTap: _countRep,
-                  child: Container(
-                    width: double.infinity,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Color(0xFF6C63FF), Color(0xFF9D4EDD)]),
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(color: const Color(0xFF6C63FF).withValues(alpha: 0.4), blurRadius: 16, offset: const Offset(0, 6)),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(
-                        'TAP FOR REP ${_exercise.emoji}',
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1),
+                // Active session: tap for reps OR hold for plank
+                if (isPlank) ...[
+                  GestureDetector(
+                    onTapDown: (_) => _onPlankHoldStart(),
+                    onTapUp: (_) => _onPlankHoldEnd(),
+                    onTapCancel: () => _onPlankHoldEnd(),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: double.infinity,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: _plankHolding
+                              ? [const Color(0xFF00C853), const Color(0xFF00E676)]
+                              : [const Color(0xFF6C63FF), const Color(0xFF9D4EDD)],
+                        ),
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (_plankHolding ? const Color(0xFF00E676) : const Color(0xFF6C63FF))
+                                .withValues(alpha: 0.4),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          _plankHolding ? 'HOLDING 🧘 KEEP IT UP!' : 'HOLD TO TIME PLANK 🧘',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ] else ...[
+                  GestureDetector(
+                    onTap: _countRep,
+                    child: Container(
+                      width: double.infinity,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [Color(0xFF6C63FF), Color(0xFF9D4EDD)]),
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(color: const Color(0xFF6C63FF).withValues(alpha: 0.4), blurRadius: 16, offset: const Offset(0, 6)),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          'TAP FOR REP ${_exercise.emoji}',
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
               const SizedBox(height: 32),
             ],

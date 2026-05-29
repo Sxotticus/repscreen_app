@@ -163,17 +163,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       IconButton(
                         icon: const Icon(Icons.settings, color: Colors.white54),
                         onPressed: () async {
-                          await Navigator.pushNamed(context, '/parental');
+                          await Navigator.pushNamed(context, '/settings');
                           _loadData();
                         },
                       ),
                       IconButton(
-                        icon: const Icon(Icons.logout, color: Colors.white54),
+                        icon: const Icon(Icons.people_alt_rounded, color: Colors.white54),
                         onPressed: () async {
-                          await StorageService.clear();
-                          if (mounted) {
-                            Navigator.pushReplacementNamed(context, '/login');
-                          }
+                          await Navigator.pushNamed(context, '/profiles');
+                          _loadData();
                         },
                       ),
                     ],

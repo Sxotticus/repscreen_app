@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -32,6 +33,12 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
   Pose? _latestPose;
   Size _imgSize = const Size(640, 480);
   bool _argsLoaded = false;
+
+  // ── Plank hold-timer state ──
+  static const int _plankTargetSeconds = 60;
+  int _plankSecondsHeld = 0;
+  bool _plankRunning = false;
+  Timer? _plankTimer;
 
   @override
   void initState() {
@@ -116,25 +123,58 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
       if (!mounted) { _processing = false; return; }
 
       if (poses.isNotEmpty) {
-        final prevReps = _repCounter.repCount;
         _repCounter.processFrame(poses.first, _imgSize);
         setState(() { _latestPose = poses.first; });
 
-        // Play rep tick when a new rep is counted
-        if (_repCounter.repCount > prevReps) {
-          SoundHapticService.playRepTick();
-        }
-
-        if (_repCounter.repCount >= _exercise.repsPerSet) {
-          await _completeSession();
+        // ── Plank: hold-timer logic ──
+        if (_exercise.name == 'Planks') {
+          if (_repCounter.bodyDetected && !_plankRunning && !_sessionDone) {
+            _startPlankTimer();
+          } else if (!_repCounter.bodyDetected && _plankRunning) {
+            _pausePlankTimer();
+          }
+        } else {
+          // Standard rep-counting exercises
+          final prevReps = _repCounter.repCount;
+          if (_repCounter.repCount > prevReps) {
+            SoundHapticService.playRepTick();
+          }
+          if (_repCounter.repCount >= _exercise.repsPerSet) {
+            await _completeSession();
+          }
         }
       } else {
         setState(() { _latestPose = null; });
         _repCounter.bodyDetected = false;
+        if (_exercise.name == 'Planks' && _plankRunning) {
+          _pausePlankTimer();
+        }
       }
     } catch (_) {}
 
     _processing = false;
+  }
+
+  void _startPlankTimer() {
+    if (_plankRunning) return;
+    _plankRunning = true;
+    _plankTimer = Timer.periodic(const Duration(seconds: 1), (t) async {
+      if (!mounted) { t.cancel(); return; }
+      setState(() => _plankSecondsHeld++);
+      // Tick every 10 seconds
+      if (_plankSecondsHeld % 10 == 0) SoundHapticService.playCountdownTick();
+      if (_plankSecondsHeld >= _plankTargetSeconds) {
+        t.cancel();
+        _plankRunning = false;
+        await _completeSession();
+      }
+    });
+  }
+
+  void _pausePlankTimer() {
+    _plankTimer?.cancel();
+    _plankTimer = null;
+    _plankRunning = false;
   }
 
   InputImage? _toInputImage(CameraImage img) {
@@ -191,6 +231,7 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
 
   @override
   void dispose() {
+    _plankTimer?.cancel();
     _camCtrl?.dispose();
     _poseDetector?.close();
     super.dispose();
@@ -203,8 +244,17 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
     final reps = _repCounter.repCount;
     final target = _exercise.repsPerSet;
     final isPlank = _exercise.name == 'Planks';
-    final label = isPlank ? 'min' : 'reps';
     final screenSize = MediaQuery.of(context).size;
+
+    // Plank progress and display values
+    final plankProgress = _plankSecondsHeld / _plankTargetSeconds;
+    final plankRemaining = _plankTargetSeconds - _plankSecondsHeld;
+    final plankMins = _plankSecondsHeld ~/ 60;
+    final plankSecs = _plankSecondsHeld % 60;
+    final plankDisplay = '$plankMins:${plankSecs.toString().padLeft(2, '0')}';
+
+    // Non-plank progress
+    final repProgress = reps / target;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -290,20 +340,39 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
                   color: Colors.black.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(28),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '$reps',
-                      style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold, color: Colors.white, height: 1),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'of $target $label',
-                      style: TextStyle(fontSize: 18, color: Colors.white.withValues(alpha: 0.7)),
-                    ),
-                  ],
-                ),
+                child: isPlank
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            plankDisplay,
+                            style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold, color: Colors.white, height: 1, fontFeatures: [FontFeature.tabularFigures()]),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _plankRunning
+                                ? '${plankRemaining}s remaining'
+                                : _repCounter.bodyDetected
+                                    ? 'Starting...'
+                                    : 'Get in position!',
+                            style: TextStyle(fontSize: 16, color: Colors.white.withValues(alpha: 0.7)),
+                          ),
+                        ],
+                      )
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '$reps',
+                            style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold, color: Colors.white, height: 1),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'of $target reps',
+                            style: TextStyle(fontSize: 18, color: Colors.white.withValues(alpha: 0.7)),
+                          ),
+                        ],
+                      ),
               ),
             ),
 
@@ -321,32 +390,38 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
                   ),
                 ),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: LinearProgressIndicator(
-                        value: reps / target,
-                        backgroundColor: Colors.white.withValues(alpha: 0.15),
-                        color: const Color(0xFF6C63FF),
-                        minHeight: 8,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: isPlank ? plankProgress : repProgress,
+                          backgroundColor: Colors.white.withValues(alpha: 0.15),
+                          color: isPlank
+                              ? (_plankRunning ? const Color(0xFF00E676) : const Color(0xFFFFD700))
+                              : const Color(0xFF6C63FF),
+                          minHeight: 8,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      '${_exercise.minutesEarned} min reward  •  ${target - reps} $label to go',
-                      style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.6)),
-                    ),
-                    if (!_repCounter.bodyDetected && _cameraReady) ...[
-                      const SizedBox(height: 8),
-                      const Text(
-                        '📍 Position yourself so the camera can see your full body',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 13, color: Color(0xFFFF9800)),
+                      const SizedBox(height: 10),
+                      Text(
+                        isPlank
+                            ? (_plankRunning
+                                ? '${_exercise.minutesEarned} min reward  •  ${plankRemaining}s to go'
+                                : 'Hold plank position to start timer')
+                            : '${_exercise.minutesEarned} min reward  •  ${target - reps} reps to go',
+                        style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.6)),
                       ),
+                      if (!_repCounter.bodyDetected && _cameraReady) ...[
+                        const SizedBox(height: 8),
+                        const Text(
+                          '📍 Position yourself so the camera can see your full body',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 13, color: Color(0xFFFF9800)),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
+                  ),
               ),
             ),
 

@@ -13,6 +13,7 @@ import 'screens/stats_screen.dart';
 import 'screens/profiles_screen.dart';
 import 'screens/leaderboard_screen.dart';
 import 'screens/onboarding_screen.dart';
+import 'screens/settings_screen.dart';
 import 'services/storage_service.dart';
 import 'services/sound_haptic_service.dart';
 import 'utils/page_transitions.dart';
@@ -60,6 +61,7 @@ class RepScreenApp extends StatelessWidget {
           '/stats': () => const StatsScreen(),
           '/profiles': () => const ProfilesScreen(),
           '/leaderboard': () => const LeaderboardScreen(),
+          '/settings': () => const SettingsScreen(),
         };
 
         final builder = routes[settings.name];
