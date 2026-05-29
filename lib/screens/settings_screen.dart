@@ -20,6 +20,8 @@ class _SettingsScreenState extends State<SettingsScreen>
   bool _parentalEnabled = false;
   int _dailyLimit = 60;
   int _minReps = 10;
+  String _unlockMode = 'earn';
+  int _dailyRepGoal = 50;
 
   @override
   void initState() {
@@ -40,6 +42,8 @@ class _SettingsScreenState extends State<SettingsScreen>
       _parentalEnabled = StorageService.parentalControlsEnabled;
       _dailyLimit = StorageService.dailyScreenTimeLimit;
       _minReps = StorageService.minRepsRequired;
+      _unlockMode = StorageService.unlockMode;
+      _dailyRepGoal = StorageService.dailyRepGoal;
     });
   }
 
@@ -213,6 +217,68 @@ class _SettingsScreenState extends State<SettingsScreen>
                         value: _hapticEnabled,
                         onChanged: _toggleHaptic,
                       ),
+                    ]),
+
+                    const SizedBox(height: 24),
+
+                    // ── Unlock Mode Section ──
+                    _sectionHeader('Unlock Mode', Icons.lock_open_rounded),
+                    _settingsCard([
+                      _modeTile(
+                        value: 'earn',
+                        groupValue: _unlockMode,
+                        icon: Icons.timer_rounded,
+                        iconColor: const Color(0xFF6C63FF),
+                        title: 'Earn Minutes',
+                        subtitle: 'Each set earns minutes of screen time',
+                        onChanged: (v) async {
+                          await StorageService.setUnlockMode(v!);
+                          setState(() => _unlockMode = v);
+                        },
+                      ),
+                      _divider(),
+                      _modeTile(
+                        value: 'daily',
+                        groupValue: _unlockMode,
+                        icon: Icons.emoji_events_rounded,
+                        iconColor: const Color(0xFFFFD700),
+                        title: 'Daily Goal',
+                        subtitle: 'Hit your rep goal → phone unlocked all day',
+                        onChanged: (v) async {
+                          await StorageService.setUnlockMode(v!);
+                          setState(() => _unlockMode = v);
+                        },
+                      ),
+                      _divider(),
+                      _modeTile(
+                        value: 'both',
+                        groupValue: _unlockMode,
+                        icon: Icons.auto_awesome_rounded,
+                        iconColor: const Color(0xFF00E676),
+                        title: 'Both',
+                        subtitle: 'Goal unlocks all day + extra reps earn minutes',
+                        onChanged: (v) async {
+                          await StorageService.setUnlockMode(v!);
+                          setState(() => _unlockMode = v);
+                        },
+                      ),
+                      if (_unlockMode == 'daily' || _unlockMode == 'both') ...[
+                        _divider(),
+                        _stepperTile(
+                          icon: Icons.flag_rounded,
+                          iconColor: const Color(0xFFFFD700),
+                          title: 'Daily Rep Goal',
+                          subtitle: 'Total reps needed to unlock for the day',
+                          value: _dailyRepGoal,
+                          min: 10,
+                          max: 500,
+                          step: 10,
+                          onChanged: (v) async {
+                            await StorageService.setDailyRepGoal(v);
+                            setState(() => _dailyRepGoal = v);
+                          },
+                        ),
+                      ],
                     ]),
 
                     const SizedBox(height: 24),
@@ -522,6 +588,40 @@ class _SettingsScreenState extends State<SettingsScreen>
         borderRadius: BorderRadius.circular(10),
       ),
       child: Icon(icon, color: color, size: 20),
+    );
+  }
+
+  Widget _modeTile({
+    required String value,
+    required String groupValue,
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required ValueChanged<String?> onChanged,
+  }) {
+    final selected = value == groupValue;
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: _iconBadge(icon, selected ? iconColor : const Color(0xFF555570)),
+      title: Text(title,
+          style: TextStyle(
+              color: selected ? Colors.white : const Color(0xFF888899),
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              fontSize: 15)),
+      subtitle: Text(subtitle,
+          style: const TextStyle(color: Color(0xFF888899), fontSize: 12)),
+      trailing: Radio<String>(
+        value: value,
+        groupValue: groupValue,
+        onChanged: onChanged,
+        activeColor: iconColor,
+        fillColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return iconColor;
+          return const Color(0xFF555570);
+        }),
+      ),
+      onTap: () => onChanged(value),
     );
   }
 }

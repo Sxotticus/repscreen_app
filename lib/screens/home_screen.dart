@@ -15,6 +15,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _totalSessions = 0;
   int _currentStreak = 0;
   int _blockedAppsCount = 0;
+  int _todayReps = 0;
+  int _dailyRepGoal = 50;
+  String _unlockMode = 'earn';
+  bool _dailyGoalReached = false;
 
   // Staggered entrance animations
   late AnimationController _staggerController;
@@ -101,6 +105,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _totalSessions = StorageService.totalSessions;
       _currentStreak = StorageService.currentStreak;
       _blockedAppsCount = StorageService.blockedApps.length;
+      _unlockMode = StorageService.unlockMode;
+      _dailyRepGoal = StorageService.dailyRepGoal;
+      _todayReps = StorageService.todayReps;
+      _dailyGoalReached = StorageService.dailyGoalReachedToday;
     });
   }
 
@@ -237,6 +245,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         'Daily limit: ${StorageService.dailyScreenTimeLimit} min',
                         style: const TextStyle(
                             fontSize: 13, color: Colors.white54),
+                      ),
+                    ],
+                    // ── Daily Goal Progress (when mode is 'daily' or 'both') ──
+                    if (_unlockMode == 'daily' || _unlockMode == 'both') ...[
+                      const SizedBox(height: 16),
+                      Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _dailyGoalReached ? '🔓 Goal Reached!' : '🎯 Daily Goal',
+                                style: const TextStyle(fontSize: 13, color: Colors.white70),
+                              ),
+                              Text(
+                                '$_todayReps / $_dailyRepGoal reps',
+                                style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: LinearProgressIndicator(
+                              value: (_todayReps / _dailyRepGoal).clamp(0.0, 1.0),
+                              backgroundColor: Colors.white.withValues(alpha: 0.2),
+                              color: _dailyGoalReached ? const Color(0xFF00E676) : Colors.white,
+                              minHeight: 7,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ],

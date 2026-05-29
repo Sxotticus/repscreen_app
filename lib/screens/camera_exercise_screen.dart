@@ -199,18 +199,26 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
     );
   }
 
+  bool _dailyGoalJustReached = false;
+
   Future<void> _completeSession() async {
     try { await _camCtrl?.stopImageStream(); } catch (_) {}
 
-    final newTime = StorageService.screenTimeMinutes + _exercise.minutesEarned;
     final newReps = StorageService.totalPushups + _exercise.repsPerSet;
     final newSessions = StorageService.totalSessions + 1;
 
-    await StorageService.setScreenTimeMinutes(newTime);
     await StorageService.setTotalPushups(newReps);
     await StorageService.setTotalSessions(newSessions);
     await StorageService.addExerciseCount(_exercise.name, _exercise.repsPerSet);
     await StorageService.updateStreak();
+    await StorageService.updateProfileStats(reps: _exercise.repsPerSet);
+
+    // logSession handles screen-time crediting + daily goal check
+    final goalJustReached = await StorageService.logSession(
+      exercise: _exercise.name,
+      reps: _exercise.repsPerSet,
+      minutesEarned: _exercise.minutesEarned,
+    );
 
     final today = DateTime.now().toIso8601String().substring(0, 10);
     if (StorageService.dailyChallengeDate != today) {
@@ -223,10 +231,16 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
       await StorageService.setChallengesCompleted(StorageService.challengesCompleted + 1);
     }
 
-    setState(() { _sessionDone = true; });
+    setState(() {
+      _sessionDone = true;
+      _dailyGoalJustReached = goalJustReached;
+    });
 
-    // Play set complete celebration sound
-    SoundHapticService.playSetComplete();
+    if (goalJustReached) {
+      SoundHapticService.playMilestone();
+    } else {
+      SoundHapticService.playSetComplete();
+    }
   }
 
   @override
@@ -477,6 +491,7 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
   }
 
   Widget _buildComplete() {
+    final mode = StorageService.unlockMode;
     return Container(
       color: Colors.black.withValues(alpha: 0.85),
       child: Center(
@@ -485,16 +500,39 @@ class _CameraExerciseScreenState extends State<CameraExerciseScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('🎉', style: TextStyle(fontSize: 64)),
+              Text(
+                _dailyGoalJustReached ? '🏆' : '🎉',
+                style: const TextStyle(fontSize: 64),
+              ),
               const SizedBox(height: 16),
-              const Text('Session Complete!',
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF4CAF50))),
+              Text(
+                _dailyGoalJustReached ? 'Daily Goal Crushed!' : 'Session Complete!',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: _dailyGoalJustReached ? const Color(0xFFFFD700) : const Color(0xFF4CAF50),
+                ),
+              ),
               const SizedBox(height: 8),
-              Text('+${_exercise.minutesEarned} minutes earned!',
-                  style: const TextStyle(fontSize: 20, color: Colors.white70)),
+              Text(
+                _dailyGoalJustReached
+                    ? '🔓 Phone unlocked for the rest of the day!'
+                    : '+${_exercise.minutesEarned} minutes earned!',
+                style: const TextStyle(fontSize: 20, color: Colors.white70),
+              ),
               const SizedBox(height: 8),
-              Text('Total: ${StorageService.screenTimeMinutes} min available',
-                  style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.5))),
+              if (!_dailyGoalJustReached)
+                Text(
+                  'Total: ${StorageService.screenTimeMinutes} min available',
+                  style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.5)),
+                ),
+              if (mode == 'daily' || mode == 'both') ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Today: ${StorageService.todayReps} / ${StorageService.dailyRepGoal} reps',
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF6C63FF)),
+                ),
+              ],
               const SizedBox(height: 6),
               Text('🔥 Streak: ${StorageService.currentStreak} days',
                   style: const TextStyle(fontSize: 16, color: Color(0xFFFF6B35))),

@@ -65,23 +65,26 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
     }
   }
 
+  bool _dailyGoalJustReached = false;
+
   void _completeSession() async {
     _pulseController.stop();
     _pulseController.reset();
 
-    final newTime = StorageService.screenTimeMinutes + _exercise.minutesEarned;
     final newReps = StorageService.totalPushups + _exercise.repsPerSet;
     final newSessions = StorageService.totalSessions + 1;
 
-    await StorageService.setScreenTimeMinutes(newTime);
     await StorageService.setTotalPushups(newReps);
     await StorageService.setTotalSessions(newSessions);
     await StorageService.addExerciseCount(_exercise.name, _exercise.repsPerSet);
-    await StorageService.logSession(
+
+    // logSession now handles screen-time crediting + daily goal check
+    final goalJustReached = await StorageService.logSession(
       exercise: _exercise.name,
       reps: _exercise.repsPerSet,
       minutesEarned: _exercise.minutesEarned,
     );
+
     await StorageService.updateStreak();
     await StorageService.updateProfileStats(reps: _exercise.repsPerSet);
 
@@ -93,21 +96,21 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
     }
     final newProgress = StorageService.dailyChallengeProgress + 1;
     await StorageService.setDailyChallengeProgress(newProgress);
-    if (newProgress >= 3) {
-      // Daily challenge: complete 3 sessions
-      final completed = StorageService.challengesCompleted;
-      if (StorageService.dailyChallengeProgress == 3) {
-        await StorageService.setChallengesCompleted(completed + 1);
-      }
+    if (newProgress >= 3 && StorageService.dailyChallengeProgress == 3) {
+      await StorageService.setChallengesCompleted(StorageService.challengesCompleted + 1);
     }
 
     setState(() {
       _sessionComplete = true;
       _sessionActive = false;
+      _dailyGoalJustReached = goalJustReached;
     });
 
-    // Play set complete sound
-    SoundHapticService.playSetComplete();
+    if (goalJustReached) {
+      SoundHapticService.playMilestone();
+    } else {
+      SoundHapticService.playSetComplete();
+    }
   }
 
   void _simulateReps() {
@@ -250,12 +253,34 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
 
               // Status
               if (_sessionComplete) ...[
-                const Text('🎉 Session Complete!', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF4CAF50))),
+                Text(
+                  _dailyGoalJustReached ? '🏆 Daily Goal Crushed!' : '🎉 Session Complete!',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: _dailyGoalJustReached ? const Color(0xFFFFD700) : const Color(0xFF4CAF50),
+                  ),
+                ),
                 const SizedBox(height: 8),
-                Text('+${_exercise.minutesEarned} minutes earned!', style: const TextStyle(fontSize: 18, color: Colors.white70)),
+                Text(
+                  _dailyGoalJustReached
+                      ? '🔓 Phone unlocked for the rest of the day!'
+                      : '+${_exercise.minutesEarned} minutes earned!',
+                  style: const TextStyle(fontSize: 18, color: Colors.white70),
+                ),
                 const SizedBox(height: 8),
-                Text('Total: ${StorageService.screenTimeMinutes} minutes available',
-                    style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.5))),
+                if (!_dailyGoalJustReached)
+                  Text(
+                    'Total: ${StorageService.screenTimeMinutes} minutes available',
+                    style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.5)),
+                  ),
+                if (StorageService.unlockMode == 'daily' || StorageService.unlockMode == 'both') ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Today: ${StorageService.todayReps} / ${StorageService.dailyRepGoal} reps',
+                    style: const TextStyle(fontSize: 14, color: Color(0xFF6C63FF)),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Text('🔥 Streak: ${StorageService.currentStreak} days',
                     style: const TextStyle(fontSize: 15, color: Color(0xFFFF6B35))),
@@ -263,11 +288,29 @@ class _EarnTimeScreenState extends State<EarnTimeScreen>
                 Text('Ready for ${_exercise.name}?',
                     style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
                 const SizedBox(height: 8),
-                Text(
-                  isPlank
-                    ? 'Hold for 60 seconds to earn ${_exercise.minutesEarned} minutes'
-                    : 'Complete ${_exercise.repsPerSet} reps to earn ${_exercise.minutesEarned} minutes',
-                  style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.5))),
+                Builder(builder: (ctx) {
+                  final mode = StorageService.unlockMode;
+                  final goal = StorageService.dailyRepGoal;
+                  final todayDone = StorageService.todayReps;
+                  if (mode == 'daily') {
+                    return Text(
+                      isPlank
+                          ? 'Hold for 60s  •  Goal: $todayDone / $goal reps today'
+                          : 'Complete ${_exercise.repsPerSet} reps  •  Goal: $todayDone / $goal reps today',
+                      style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.5)));
+                  } else if (mode == 'both') {
+                    return Text(
+                      isPlank
+                          ? 'Hold for 60s → earn time  •  Goal: $todayDone / $goal reps'
+                          : 'Complete ${_exercise.repsPerSet} reps → earn ${_exercise.minutesEarned} min  •  Goal: $todayDone / $goal',
+                      style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.5)));
+                  }
+                  return Text(
+                    isPlank
+                        ? 'Hold for 60 seconds to earn ${_exercise.minutesEarned} minutes'
+                        : 'Complete ${_exercise.repsPerSet} reps to earn ${_exercise.minutesEarned} minutes',
+                    style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.5)));
+                }),
               ] else if (isPlank) ...[
                 Text(
                   _plankHolding ? 'Hold steady! 🧘' : 'Release detected — keep holding!',

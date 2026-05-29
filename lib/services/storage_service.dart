@@ -21,6 +21,44 @@ class StorageService {
     await _prefs.setInt('screen_time', minutes);
   }
 
+  // ── Unlock Mode ──────────────────────────────────────────────
+  // 'earn' = reps → earn minutes (default)
+  // 'daily' = hit daily rep goal → unlocked for the rest of the day
+  // 'both'  = daily goal unlocks all day AND extra reps still earn minutes
+  static String get unlockMode => _prefs.getString('unlock_mode') ?? 'earn';
+  static Future<void> setUnlockMode(String mode) async {
+    await _prefs.setString('unlock_mode', mode);
+  }
+
+  // Daily rep goal (used in 'daily' and 'both' modes)
+  static int get dailyRepGoal => _prefs.getInt('daily_rep_goal') ?? 50;
+  static Future<void> setDailyRepGoal(int goal) async {
+    await _prefs.setInt('daily_rep_goal', goal);
+  }
+
+  // Today's total reps (for daily-goal tracking, resets each day)
+  static int get todayReps {
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    return _prefs.getInt('today_reps_$today') ?? 0;
+  }
+  static Future<void> addTodayReps(int reps) async {
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final current = _prefs.getInt('today_reps_$today') ?? 0;
+    await _prefs.setInt('today_reps_$today', current + reps);
+  }
+
+  // Has the daily goal been reached today?
+  static bool get dailyGoalReachedToday {
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    return _prefs.getBool('daily_goal_reached_$today') ?? false;
+  }
+  static Future<void> setDailyGoalReached() async {
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    await _prefs.setBool('daily_goal_reached_$today', true);
+    // In daily/both mode, set screen time to a large value = "open all day"
+    await setScreenTimeMinutes(1440); // 24 hours in minutes
+  }
+
   // Total reps completed (lifetime)
   static int get totalPushups => _prefs.getInt('total_pushups') ?? 0;
   static Future<void> setTotalPushups(int count) async {
@@ -176,8 +214,9 @@ class StorageService {
     await _prefs.setString('daily_history', json.encode(history));
   }
 
-  /// Log a completed session to daily history
-  static Future<void> logSession({
+  /// Log a completed session to daily history.
+  /// Returns true if this session triggered the daily goal being reached.
+  static Future<bool> logSession({
     required String exercise,
     required int reps,
     required int minutesEarned,
@@ -191,10 +230,31 @@ class StorageService {
     history[today] = dayData;
     await _saveDailyHistory(history);
 
-    // Also track per-exercise daily history
+    // Track per-exercise daily history
     final exKey = 'daily_ex_${today}_$exercise';
     final exCount = _prefs.getInt(exKey) ?? 0;
     await _prefs.setInt(exKey, exCount + reps);
+
+    // Track today's reps for daily-goal mode
+    await addTodayReps(reps);
+
+    // Check if daily goal was just reached (only fire once per day)
+    bool justReachedGoal = false;
+    final mode = unlockMode;
+    if ((mode == 'daily' || mode == 'both') && !dailyGoalReachedToday) {
+      if (todayReps >= dailyRepGoal) {
+        await setDailyGoalReached();
+        justReachedGoal = true;
+      }
+    }
+
+    // In 'earn' and 'both' modes, always add the per-session minutes
+    if (mode == 'earn' || mode == 'both') {
+      final newTime = screenTimeMinutes + minutesEarned;
+      await setScreenTimeMinutes(newTime);
+    }
+
+    return justReachedGoal;
   }
 
   /// Get reps for last N days (returns list from oldest to newest)
