@@ -1,6 +1,8 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 import 'dart:convert';
 import '../models/user_profile.dart';
+import 'supabase_service.dart';
 
 class StorageService {
   static late SharedPreferences _prefs;
@@ -116,6 +118,16 @@ class StorageService {
       if (1 > bestStreak) await setBestStreak(1);
     }
     await setLastWorkoutDate(today);
+
+    // Fire-and-forget sync to Supabase (silent fail, works offline)
+    final lastDt = lastWorkoutDate.isNotEmpty ? DateTime.tryParse(lastWorkoutDate) : null;
+    unawaited(
+      SupabaseService.syncStreak(
+        current: currentStreak,
+        best: bestStreak,
+        lastDate: lastDt,
+      ).catchError((_) {}),
+    );
   }
 
   // ── Exercise Stats ──
@@ -253,6 +265,23 @@ class StorageService {
       final newTime = screenTimeMinutes + minutesEarned;
       await setScreenTimeMinutes(newTime);
     }
+
+    // Fire-and-forget sync to Supabase (silent fail, works offline)
+    unawaited(
+      SupabaseService.syncSession(
+        exercise: exercise,
+        reps: reps,
+        minutesEarned: minutesEarned,
+      ).catchError((_) {}),
+    );
+    // Sync per-exercise lifetime total
+    final exerciseTotal = getExerciseCount(exercise) + reps;
+    unawaited(
+      SupabaseService.syncExerciseStat(
+        exercise: exercise,
+        totalReps: exerciseTotal,
+      ).catchError((_) {}),
+    );
 
     return justReachedGoal;
   }

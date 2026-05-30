@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../widgets/gradient_button.dart';
 import '../services/storage_service.dart';
+import '../services/supabase_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -17,8 +19,9 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    // Auto-navigate if already logged in
-    if (StorageService.isLoggedIn) {
+    // Auto-navigate if there is already an active Supabase session
+    // or if the local flag says logged in.
+    if (SupabaseService.currentSession != null || StorageService.isLoggedIn) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         Navigator.pushReplacementNamed(context, '/home');
       });
@@ -36,12 +39,27 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // Simple local auth for MVP (no backend yet)
-    await StorageService.setLoggedIn(true);
-    await StorageService.setUserEmail(email);
+    try {
+      await SupabaseService.signIn(email, password);
+      // Keep local storage in sync for offline compat
+      await StorageService.setLoggedIn(true);
+      await StorageService.setUserEmail(email);
 
-    if (mounted) {
-      Navigator.pushReplacementNamed(context, '/home');
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/home');
+      }
+    } on AuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('An unexpected error occurred. Please try again.')),
+        );
+      }
     }
   }
 

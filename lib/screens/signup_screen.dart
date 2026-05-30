@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../widgets/gradient_button.dart';
 import '../services/storage_service.dart';
+import '../services/supabase_service.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -41,15 +43,36 @@ class _SignupScreenState extends State<SignupScreen> {
       return;
     }
 
-    // Simple local auth for MVP
-    await StorageService.setLoggedIn(true);
-    await StorageService.setUserEmail(email);
-    await StorageService.setScreenTimeMinutes(0);
-    await StorageService.setTotalPushups(0);
-    await StorageService.setTotalSessions(0);
+    try {
+      await SupabaseService.signUp(email, password);
+      // Keep local storage in sync for offline compat
+      await StorageService.setLoggedIn(true);
+      await StorageService.setUserEmail(email);
+      await StorageService.setScreenTimeMinutes(0);
+      await StorageService.setTotalPushups(0);
+      await StorageService.setTotalSessions(0);
 
-    if (mounted) {
-      Navigator.pushReplacementNamed(context, '/home');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Check your email to confirm your account'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+        Navigator.pushReplacementNamed(context, '/home');
+      }
+    } on AuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('An unexpected error occurred. Please try again.')),
+        );
+      }
     }
   }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/login_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/home_screen.dart';
@@ -15,11 +16,13 @@ import 'screens/leaderboard_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/storage_service.dart';
+import 'services/supabase_service.dart';
 import 'services/sound_haptic_service.dart';
 import 'utils/page_transitions.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SupabaseService.initialize();
   await StorageService.init();
   SoundHapticService.setSoundEnabled(StorageService.soundEnabled);
   SoundHapticService.setHapticEnabled(StorageService.hapticEnabled);
@@ -29,6 +32,13 @@ void main() async {
 
 class RepScreenApp extends StatelessWidget {
   const RepScreenApp({super.key});
+
+  static String _getInitialRoute() {
+    // If the user has an active Supabase session, go straight to home.
+    if (SupabaseService.currentSession != null) return '/home';
+    // Otherwise check if onboarding has been seen.
+    return StorageService.hasSeenOnboarding ? '/login' : '/onboarding';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +54,7 @@ class RepScreenApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF0A0A1A),
         fontFamily: 'Roboto',
       ),
-      initialRoute: StorageService.hasSeenOnboarding ? '/login' : '/onboarding',
+      initialRoute: _getInitialRoute(),
       onGenerateRoute: (settings) {
         final routes = <String, Widget Function()>{
           '/onboarding': () => const OnboardingScreen(),
